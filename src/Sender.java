@@ -1,4 +1,8 @@
 public class Sender {
+    private
+    float flp;
+    float rlp;
+
 
 
     public static void main(String[] args) throws Exception {
@@ -15,12 +19,23 @@ public class Sender {
         */
 
         //construct socket instance
+        if (args.length != 6) {
+            System.out.println("Usage: Sender <sender port> <receiver port> <text file> <window size> <retransmission timer>");
+            return;
+        }
+
 
         
 
 
         System.out.println("Hello, World!");
     }
+    
+    public class sendThread extends Thread {
 
+    }
 
+    public class retransmissionTimer extends Thread {
+        System.sleep(rto);
+    }
 }
