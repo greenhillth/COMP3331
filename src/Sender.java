@@ -2,6 +2,7 @@ public class Sender {
     private
     float flp;
     float rlp;
+    int rto;
 
 
 
@@ -36,6 +37,13 @@ public class Sender {
     }
 
     public class retransmissionTimer extends Thread {
-        System.sleep(rto);
+        public void run(){
+            try {
+                Thread.sleep(rto);
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
-import java.net.DatagramSocket;
-import java.net.SocketException;
+import java.io.*;
+import java.util.*;
+import java.net.*;
 
 
 enum Status {
@@ -16,9 +17,12 @@ public class SimpleSocket extends DatagramSocket {
     int remotePort;
     int localPort;
 
+    DatagramPacket[] SendWindow;
+    int
 
 
-    public SimpleSocket() throws SocketException {
+    
+    public void SimpleSocket() throws SocketException {
 
 
     }
@@ -37,12 +41,22 @@ public class SimpleSocket extends DatagramSocket {
     
     }
 
+    public Status Send(byte[] data) {
+
+        return Status.SUCCESS;
+    }
+
     private Status SendPacket() {
         
 
         return Status.SUCCESS;
 
     }
+
+
+
+
+
     
 
 }
