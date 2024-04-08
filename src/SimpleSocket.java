@@ -2,16 +2,8 @@ import java.io.*;
 import java.util.*;
 import java.net.*;
 
-
-enum Status {
-    SUCCESS,
-    TIMEOUT
-
-}
-
-public class SimpleSocket extends DatagramSocket {
+public class SimpleSocket {
     DatagramSocket sock;
-
 
     int window;
     int remotePort;
@@ -19,24 +11,16 @@ public class SimpleSocket extends DatagramSocket {
 
     DatagramPacket[] SendWindow;
 
-    
-    public void SimpleSocket() throws SocketException {
-
-
-    }
-
-
-    public SimpleSocket(int window, int serverPort, int clientPort) throws SocketException {
+    public SimpleSocket(int window, int localPort, int remotePort) throws SocketException {
         this.window = window;
-        this.remotePort = serverPort;
-        this.localPort = clientPort;
-
+        this.localPort = localPort;
+        this.remotePort = remotePort;
     }
 
-    public Status Connect() { 
-        
+    public Status Connect() {
+
         return Status.SUCCESS;
-    
+
     }
 
     public Status Send(byte[] data) {
@@ -45,16 +29,9 @@ public class SimpleSocket extends DatagramSocket {
     }
 
     private Status SendPacket() {
-        
 
         return Status.SUCCESS;
 
     }
-
-
-
-
-
-    
 
 }
