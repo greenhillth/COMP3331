@@ -1,5 +1,6 @@
 import java.io.IOException;
 import java.net.SocketException;
+import java.util.*;
 
 public class Sender {
     private float flp;
@@ -8,6 +9,8 @@ public class Sender {
 
     private String textFile;
     private SimpleSocket sock;
+
+    private Random rng;
 
     public static void main(String[] args) throws Exception {
         // get args for
@@ -48,8 +51,24 @@ public class Sender {
         this.flp = flp;
         this.rlp = rlp;
         this.textFile = textFile;
-        this.sock = new SimpleSocket(winSize, localPort, remotePort);
+        this.sock = new SimpleSocket(winSize, localPort, remotePort, false);
 
+    }
+
+    private Status send() throws InterruptedException {
+        if (!forwardLoss()) {
+
+        }
+
+        return Status.SUCCESS;
+    }
+
+    private boolean forwardLoss() {
+        return rng.nextFloat() < flp;
+    }
+
+    private boolean reverseLoss() {
+        return rng.nextFloat() < rlp;
     }
 
     // Thread runner
@@ -66,7 +85,7 @@ public class Sender {
     public class sendThread extends Thread {
         public void run() {
             try {
-                Thread.sleep(rto);
+                send();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

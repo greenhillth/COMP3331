@@ -1,4 +1,5 @@
 public enum Status {
     SUCCESS,
-    TIMEOUT
+    TIMEOUT,
+    CONNECTION_FAILURE
 }
