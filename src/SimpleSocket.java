@@ -18,8 +18,6 @@ public class SimpleSocket extends DatagramSocket {
     int localPort;
 
     DatagramPacket[] SendWindow;
-    int
-
 
     
     public void SimpleSocket() throws SocketException {
