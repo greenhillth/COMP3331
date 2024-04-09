@@ -51,7 +51,7 @@ public class Sender {
         this.flp = flp;
         this.rlp = rlp;
         this.textFile = textFile;
-        this.sock = new SimpleSocket(winSize, localPort, remotePort, false);
+        this.sock = new SimpleSocket(winSize, localPort, false);
 
     }
 
