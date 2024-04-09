@@ -16,7 +16,7 @@ public class SimpleSocket {
 
     STPState state;
 
-    public static void main(String args[]) {
+    public static void main(String args[]) throws SocketException {
 
     }
 
@@ -92,36 +92,80 @@ public class SimpleSocket {
      * 
      */
 
-    private class STPPacket {
-        char flg;
-        char seq;
-        byte[] bytes;
+    public class STPPacket {
+        STPFlag flg;
+        int seq;
+        byte[] payload;
         int size;
 
         public STPPacket(STPFlag flag, int seqno, byte[] data, int len) {
-            this.flg = flag.val;
-            this.seq = (char) seqno;
+            this.flg = flag;
+            this.seq = seqno;
             this.size = len + 4;
-
-            ByteBuffer packet = ByteBuffer.allocate(len + 4);
-
+            this.payload = new byte[len];
+            for (int i = 0; i < len; i++) {
+                this.payload[i] = data[i];
+            }
             return;
         }
 
         public STPPacket(STPFlag flag, int seqno) {
-            this.flg = flag.val;
-            this.seq = (char) seqno;
+            this.flg = flag;
+            this.seq = seqno;
             this.size = 4;
-            // Flag high byte //Flag low byte
-            byte[] barray = { (byte) (flg & 0xFF), (byte) (flg >> 8 & 0xFF),
-                    (byte) (seq & 0xFF), (byte) (seq >> 8 & 0xFF) };
-            // Seq high byte //Seq low byte
-            this.bytes = barray;
         }
 
-        // public static void main(String args[]) {
+        public STPPacket(byte[] in, int len) {
+            this.size = len;
+            int flagint = ((in[0] << 8) | in[1]);
+            switch (flagint) {
+                case 0:
+                    this.flg = STPFlag.DATA;
+                    break;
+                case 1:
+                    this.flg = STPFlag.ACK;
+                    break;
+                case 2:
+                    this.flg = STPFlag.SYN;
+                    break;
+                case 3:
+                    this.flg = STPFlag.FIN;
+                    break;
+            }
+            this.seq = ((in[2] << 8) | in[3]);
+            if (len > 4) {
+                this.payload = new byte[len - 4];
+                for (int i = 4; i < len; i++) {
+                    this.payload[i - 4] = in[i];
+                }
+            }
+        }
 
-        // }
+        public byte[] bytes() {
+            byte sl = (byte) (seq & 0xFF);
+            byte sh = (byte) ((seq >> 8) & 0xFF);
+            byte[] header = { flg.hb, flg.lb, sh, sl };
+            if (size == 4) {
+                return header;
+            }
+            byte[] byteArr = new byte[size];
+            ByteBuffer packet = ByteBuffer.wrap(byteArr);
+            packet.put(header);
+            packet.put(payload);
+            return packet.array();
+        }
+
+        public void printPacket() {
+            byte[] byteArray = this.bytes();
+
+            System.out.println("Hexadecimal representation of packet:");
+            for (byte b : byteArray) {
+                String hex = String.format("%02X", b & 0xFF);
+                System.out.print(hex + " ");
+            }
+            System.out.println();
+        }
+
     }
 }
 
