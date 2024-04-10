@@ -1,8 +1,12 @@
 import java.io.IOException;
-import java.net.SocketException;
+import java.net.*;
 import java.util.*;
 
 public class Sender {
+    int localPort;
+    int remotePort;
+    InetSocketAddress remoteAddr;
+
     private float flp;
     private float rlp;
     private int rto;
@@ -36,14 +40,12 @@ public class Sender {
                 args[2], Integer.parseInt(args[3]), Integer.parseInt(args[4]),
                 Float.parseFloat(args[5]), Float.parseFloat(args[6]));
 
-        try {
-            client.start();
-        } catch (IOException e) {
-            e.printStackTrace();
-            System.exit(1);
-        }
+        System.out.println("Sender created");
 
-        System.out.println("Hello, World!");
+        client.connect();
+
+        System.out.println();
+
     }
 
     public Sender(int localPort, int remotePort, String textFile, int winSize, int retransmissionTimer, float flp,
@@ -51,8 +53,16 @@ public class Sender {
         this.flp = flp;
         this.rlp = rlp;
         this.textFile = textFile;
-        this.sock = new SimpleSocket(winSize, localPort, false);
 
+        InetAddress localhost = InetAddress.getLoopbackAddress();
+        this.remoteAddr = new InetSocketAddress(localhost, remotePort);
+
+        this.sock = new SimpleSocket(localPort, winSize, false);
+
+    }
+
+    public void connect() throws IOException {
+        sock.Connect(remoteAddr);
     }
 
     private Status send() throws InterruptedException {
@@ -73,8 +83,6 @@ public class Sender {
 
     // Thread runner
     public void start() throws IOException {
-        sock.Connect();
-
         new sendThread().start();
         new logThread().start();
         new maintenanceThread().start();
