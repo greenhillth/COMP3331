@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.*;
 import java.util.*;
@@ -42,7 +44,7 @@ public class Sender {
 
         System.out.println("Sender created");
 
-        client.connect();
+        client.run();
 
         System.out.println();
 
@@ -58,6 +60,45 @@ public class Sender {
         this.remoteAddr = new InetSocketAddress(localhost, remotePort);
 
         this.sock = new SimpleSocket(localPort, winSize, false);
+
+    }
+
+    public void run() {
+        for (int i = 0; (!sock.connected) && i < 5; i++) {
+            try {
+                sock.Connect(remoteAddr);
+            } catch (Exception e) {
+                try {
+                    Thread.sleep(30);
+                } catch (InterruptedException ie) {
+                    ie.printStackTrace();
+                }
+            }
+        }
+        if (!sock.connected) {
+            return;
+        }
+
+        // Set Sender transmission parameters
+        sock.setTransmissionParams(flp, rlp, rto);
+
+        // Load file data into buffer
+        try (FileInputStream fis = new FileInputStream(textFile);
+                ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                bos.write(buffer, 0, bytesRead);
+            }
+
+            byte[] fileBytes = bos.toByteArray();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        // set up threads
 
     }
 

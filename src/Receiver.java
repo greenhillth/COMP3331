@@ -2,8 +2,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.InetAddress;
-import java.net.SocketException;
-import java.util.*;
 
 public class Receiver {
     int localPort;
@@ -38,7 +36,7 @@ public class Receiver {
 
         System.out.println("Receiver created");
 
-        client.connect();
+        client.run();
 
         System.out.println();
     }
@@ -56,6 +54,26 @@ public class Receiver {
         this.sock = new SimpleSocket(localPort, winSize, true);
 
         this.fos = new FileOutputStream(outFile);
+    }
+
+    public void run() {
+        for (int i = 0; (!sock.connected) && i < 5; i++) {
+            try {
+                sock.Connect(remoteAddr);
+            } catch (Exception e) {
+                try {
+                    Thread.sleep(30);
+                } catch (InterruptedException ie) {
+                    ie.printStackTrace();
+                }
+            }
+        }
+        if (!sock.connected) {
+            return;
+        }
+
+        // set up threads
+
     }
 
     public void connect() throws IOException {

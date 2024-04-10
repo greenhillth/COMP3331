@@ -26,6 +26,11 @@ public class SimpleSocket {
     boolean isReceiver;
     boolean connected;
 
+    float rlp;
+    float flp;
+    int rto;
+    Random rng;
+
     PriorityBlockingQueue<STPPacket> SendWindow;
     PriorityBlockingQueue<STPPacket> ReceiveWindow;
 
@@ -46,6 +51,10 @@ public class SimpleSocket {
         this.connected = false;
         this.remoteAddress = null;
 
+        this.rlp = 0;
+        this.flp = 0;
+        this.rng = new Random();
+
         this.SendWindow = new PriorityBlockingQueue<STPPacket>(window, new STPPacket.PriorityComparator());
         this.ReceiveWindow = new PriorityBlockingQueue<STPPacket>(window, new STPPacket.PriorityComparator());
         this.logBuffer = new ArrayBlockingQueue<String>(window);
@@ -53,48 +62,51 @@ public class SimpleSocket {
         this.sock = new DatagramSocket(localPort);
     }
 
-    public Status Connect(InetSocketAddress remoteHost) throws IOException {
+    public void setTransmissionParams(float flp, float rlp, int rto) {
+        this.flp = flp;
+        this.rlp = rlp;
+        this.rto = rto;
+    }
+
+    public void Connect(InetSocketAddress remoteHost) throws IOException {
         remoteAddress = remoteHost;
         this.startTime = System.currentTimeMillis();
         sock.connect(remoteHost);
+
         // Receiver logic
         if (isReceiver) {
             // await handshake
             state = STPState.LISTEN;
             processIncomingPackets();
+
             processReceiveQueue();
 
-            // manually invoke send and return true
             processSendQueue();
-
-            return Status.SUCCESS;
-        }
-
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
         }
 
         // Sender logic
-        startSeq(0, 0xFF - 1);
-        STPPacket handshake = new STPPacket(STPFlag.SYN, 252);
-        this.seq = seq + 4;
-        addToSendBuffer(handshake);
+        else {
+            startSeq(0, 0xFF - 1);
+            STPPacket handshake = new STPPacket(STPFlag.SYN, getCurrSeq(4));
+            addToSendBuffer(handshake);
 
-        // manually invoke send
-        processSendQueue();
+            // manually invoke send
+            processSendQueue();
+            state = STPState.SYN_SENT;
 
-        processIncomingPackets();
-        processReceiveQueue();
+            processIncomingPackets();
 
-        // // block until ack recieved or rto reac
-        // state = STPState.LISTEN;
-        // byte[] recv = new byte[4];
-        // DatagramPacket ack = new DatagramPacket(recv, 4);
-        // sock.receive(ack);
+            processReceiveQueue();
+        }
 
-        return Status.SUCCESS;
+        state = STPState.EST;
+        connected = true;
+    }
+
+    private int getCurrSeq(int size) {
+        int diff = (seq + size) - 0xFF;
+        seq = (diff > 0) ? diff : seq;
+        return seq;
     }
 
     private boolean acknowledge(int seq) {
@@ -114,10 +126,12 @@ public class SimpleSocket {
         SendWindow.forEach(p -> {
             if (p.sendFlag) {
                 DatagramPacket d = new DatagramPacket(p.bytes(), p.size, remoteAddress);
-                try {
-                    sock.send(d);
-                } catch (IOException e) {
-                    e.printStackTrace();
+                if (!packetLoss(p)) {
+                    try {
+                        sock.send(d);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
                 addToLogBuffer(p, "snd");
             }
@@ -125,10 +139,23 @@ public class SimpleSocket {
 
     }
 
+    private boolean packetLoss(STPPacket p) {
+        if (isReceiver || (rlp == 0 && flp == 0)) {
+            return false;
+        }
+        if (p.flg == STPFlag.ACK) {
+            return rng.nextFloat() < rlp;
+        } else {
+            return rng.nextFloat() < flp;
+        }
+
+    }
+
     public void processIncomingPackets() throws IOException {
         byte[] buff = new byte[1004];
         DatagramPacket packet = new DatagramPacket(buff, buff.length);
         sock.receive(packet);
+
         STPPacket p = new STPPacket(packet.getData(), buff.length);
 
         if (addToReceiveBuffer(p)) {
@@ -172,7 +199,7 @@ public class SimpleSocket {
 
     public void addToLogBuffer(STPPacket p, String type) {
         double t = (p.timeStamp - startTime) * 1e-3;
-        String entry = String.format("%s  %.4f\t  %s %d %d", type, t, p.flg.name(), p.seq, p.size - 4);
+        String entry = String.format("%s   %.4f\t%s   %d   %d", type, t, p.flg.name(), p.seq, p.size - 4);
         System.out.println(entry);
         logBuffer.offer(entry);
     }
