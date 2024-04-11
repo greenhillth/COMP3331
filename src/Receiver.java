@@ -1,6 +1,9 @@
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.net.InetAddress;
 
 public class Receiver {
@@ -11,6 +14,8 @@ public class Receiver {
     int winSize;
 
     private String outFile;
+    private String logFile;
+
     private FileOutputStream fos;
     private SimpleSocket sock;
 
@@ -44,6 +49,7 @@ public class Receiver {
     public Receiver(int localPort, int remotePort, String textFile, int winSize) throws Exception {
         this.localPort = localPort;
         this.remotePort = remotePort;
+        this.logFile = "receiver_log.txt";
 
         InetAddress localhost = InetAddress.getLoopbackAddress();
         this.remoteAddr = new InetSocketAddress(localhost, remotePort);
@@ -57,12 +63,14 @@ public class Receiver {
     }
 
     public void run() {
+        initialiseLog();
+
         for (int i = 0; (!sock.connected) && i < 5; i++) {
             try {
                 sock.Connect(remoteAddr);
             } catch (Exception e) {
                 try {
-                    Thread.sleep(30);
+                    Thread.sleep(50);
                 } catch (InterruptedException ie) {
                     ie.printStackTrace();
                 }
@@ -73,27 +81,64 @@ public class Receiver {
         }
 
         // set up threads
+        try {
+            start();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
     }
 
-    public void connect() throws IOException {
-        sock.Connect(remoteAddr);
+    // Thread runner
+    public void start() throws IOException {
+        new sendThread().start();
+        new receiveThread().start();
+        new timerThread().start();
+        new logThread().start();
+        new maintenanceThread().start();
     }
 
     // Threads
-
     public class sendThread extends Thread {
+        public sendThread() {
+            this.setName("Receive Thread");
+        }
+
         public void run() {
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            while (sock.state == STPState.EST) {
+                sock.processSendQueue();
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
     }
 
-    public class writerThread extends Thread {
+    public class receiveThread extends Thread {
+        public receiveThread() {
+            this.setName("Receive Thread");
+        }
+
+        public void run() {
+            while (sock.state == STPState.EST) {
+                try {
+                    sock.processIncomingPackets();
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+    public class timerThread extends Thread {
+        public timerThread() {
+            this.setName("Timer Thread");
+        }
+
         public void run() {
             try {
                 Thread.sleep(1000);
@@ -104,25 +149,69 @@ public class Receiver {
     }
 
     public class logThread extends Thread {
-        public void run() {
-            try {
-
-            } catch (Exception e) {
-
-            }
+        public logThread() {
+            this.setName("Logging Thread");
         }
 
+        public void run() {
+            while (sock.state == STPState.EST) {
+                try {
+                    writeToLog();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     public class maintenanceThread extends Thread {
         public void run() {
-            try {
-
-            } catch (Exception e) {
-
+            while (sock.state == STPState.EST) {
+                try {
+                    sock.processReceiveQueue();
+                    sock.retransmissionCheck();
+                    sock.processSendQueue();
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
 
     }
 
+    private void initialiseLog() {
+
+        try (FileOutputStream fos = new FileOutputStream(logFile)) {
+            ZonedDateTime now = ZonedDateTime.now();
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z");
+
+            String currtime = now.format(formatter);
+
+            String header = """
+                              Receiver Log File \n
+                    Session date and time: %s\n
+                    operation    delta     flag     seq      size
+                    ------------------------------------------------
+                        """;
+            String data = String.format(header, currtime);
+            byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
+
+            fos.write(bytes);
+
+            sock.setLogFormat("%s          %-8.4f  %-4s      %-6d    %-4d %s\n");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void writeToLog() throws InterruptedException {
+        String entry = sock.logBuffer.take();
+        byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
+        try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
+            fos.write(bytes);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+    }
 }

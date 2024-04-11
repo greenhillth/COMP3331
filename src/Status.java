@@ -2,5 +2,6 @@ public enum Status {
     SUCCESS,
     TIMEOUT,
     CONNECTION_FAILURE,
-    IO_ERR
+    IO_ERR,
+    INV_PACKT
 }
