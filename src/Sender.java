@@ -62,6 +62,7 @@ public class Sender {
             float rlp) throws SocketException {
         this.flp = flp;
         this.rlp = rlp;
+        this.rto = retransmissionTimer;
         this.textFile = textFile;
         this.logFile = "sender_log.txt";
 

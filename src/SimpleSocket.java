@@ -35,7 +35,7 @@ public class SimpleSocket {
 
     float rlp;
     float flp;
-    long rto;
+    int rto;
     Random rng;
 
     String logFormat;
@@ -58,8 +58,6 @@ public class SimpleSocket {
         this.isReceiver = isReciever;
         this.connected = false;
         this.remoteAddress = null;
-
-        this.rto = 1000;
 
         this.rlp = 0;
         this.flp = 0;
@@ -247,6 +245,7 @@ public class SimpleSocket {
     // non-blocking
     public void processSendQueue() {
         SendWindow.forEach(p -> {
+            p.updateSendFlag(System.currentTimeMillis(), rto);
             if (p.sendFlag) {
                 DatagramPacket d = new DatagramPacket(p.bytes(), p.size, remoteAddress);
                 if (!packetLoss(p)) {
@@ -319,40 +318,41 @@ public class SimpleSocket {
             printwins();
         }
         STPPacket head = ReceiveWindow.poll();
-        if (head == null) {
-            return;
+        while (head != null) {
+            switch (head.flg) {
+                case DATA:
+                    if (head.payload == null) {
+                        break;
+                    }
+                    // Add data to output and create ack
+                    STPPacket ack = new STPPacket(STPFlag.ACK, head.seq);
+                    addToSendBuffer(ack);
+                    try {
+                        inWriter.write(head.payload);
+                    } catch (Exception e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    break;
+                case ACK:
+                    // Remove corresponding data segment from output queue
+                    if (acknowledge(head.seq)) {
+                        // System.out.println(String.format("removed packet with SEQ=%d", head.seq));
+                    }
+                    break;
+                case SYN:
+                    STPPacket synack = new STPPacket(STPFlag.ACK, head.seq);
+                    addToSendBuffer(synack);
+                    break;
+                case FIN:
+                    // Initiate close
+                    break;
+                default:
+                    break;
+            }
+            head = ReceiveWindow.poll();
         }
 
-        switch (head.flg) {
-            case DATA:
-                if (head.payload == null) {
-                    break;
-                }
-                // Add data to output and create ack
-                STPPacket ack = new STPPacket(STPFlag.ACK, head.seq);
-                addToSendBuffer(ack);
-                try {
-                    inWriter.write(head.payload);
-                } catch (Exception e) {
-                    Thread.currentThread().interrupt();
-                }
-                break;
-            case ACK:
-                // Remove corresponding data segment from output queue
-                if (acknowledge(head.seq)) {
-                    // System.out.println(String.format("removed packet with SEQ=%d", head.seq));
-                }
-                break;
-            case SYN:
-                STPPacket synack = new STPPacket(STPFlag.ACK, head.seq);
-                addToSendBuffer(synack);
-                break;
-            case FIN:
-                // Initiate close
-                break;
-            default:
-                break;
-        }
+        return;
 
         // send diag info to log buffer
 
@@ -557,7 +557,7 @@ public class SimpleSocket {
             System.out.println();
         }
 
-        public void updateSendFlag(long currTime, long rto) {
+        public void updateSendFlag(long currTime, int rto) {
             if (!sendFlag && ((currTime - timeStamp) > rto)) {
                 sendFlag = true;
             }
