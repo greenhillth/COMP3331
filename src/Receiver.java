@@ -1,9 +1,12 @@
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.net.InetAddress;
 
 public class Receiver {
@@ -72,7 +75,7 @@ public class Receiver {
                 try {
                     Thread.sleep(50);
                 } catch (InterruptedException ie) {
-                    ie.printStackTrace();
+                    Thread.currentThread().interrupt();
                 }
             }
         }
@@ -80,75 +83,14 @@ public class Receiver {
             return;
         }
 
-        // set up threads
-        try {
-            start();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-    }
-
-    // Thread runner
-    public void start() throws IOException {
-        new sendThread().start();
-        new receiveThread().start();
-        new timerThread().start();
         new logThread().start();
-        new maintenanceThread().start();
+        new printThread().start();
+
     }
 
     // Threads
-    public class sendThread extends Thread {
-        public sendThread() {
-            this.setName("Receive Thread");
-        }
-
-        public void run() {
-            while (sock.state == STPState.EST) {
-                sock.processSendQueue();
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-
-    }
-
-    public class receiveThread extends Thread {
-        public receiveThread() {
-            this.setName("Receive Thread");
-        }
-
-        public void run() {
-            while (sock.state == STPState.EST) {
-                try {
-                    sock.processIncomingPackets();
-                    Thread.sleep(100);
-                } catch (Exception e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
-
-    public class timerThread extends Thread {
-        public timerThread() {
-            this.setName("Timer Thread");
-        }
-
-        public void run() {
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
     public class logThread extends Thread {
+
         public logThread() {
             this.setName("Logging Thread");
         }
@@ -162,21 +104,49 @@ public class Receiver {
                 }
             }
         }
+
+        private void writeToLog() throws InterruptedException {
+            String entry = sock.logBuffer.take();
+            byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
+            try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
+                fos.write(bytes);
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+            }
+
+        }
+
     }
 
-    public class maintenanceThread extends Thread {
+    public class printThread extends Thread {
+        public printThread() {
+            this.setName("Output File Writer Thread");
+        }
+
         public void run() {
             while (sock.state == STPState.EST) {
                 try {
-                    sock.processReceiveQueue();
-                    sock.retransmissionCheck();
-                    sock.processSendQueue();
-                } catch (Exception e) {
+                    writeToOutput();
+                } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
         }
 
+        private void writeToOutput() throws InterruptedException {
+            try (FileOutputStream fos = new FileOutputStream(outFile, true);) {
+                InputStream in = sock.getInputStream();
+                int read = in.read();
+                while (read != -1) {
+                    fos.write(read);
+                    read = in.read();
+                }
+                System.out.println("balls");
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+            }
+
+        }
     }
 
     private void initialiseLog() {
@@ -200,18 +170,8 @@ public class Receiver {
 
             sock.setLogFormat("%s          %-8.4f  %-4s      %-6d    %-4d %s\n");
         } catch (Exception e) {
-            e.printStackTrace();
+            Thread.currentThread().interrupt();
         }
     }
 
-    private void writeToLog() throws InterruptedException {
-        String entry = sock.logBuffer.take();
-        byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
-        try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
-            fos.write(bytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
-    }
 }

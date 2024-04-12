@@ -1,26 +1,32 @@
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
+import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 
 public class test {
     public static void main(String[] args) {
-        ZonedDateTime now = ZonedDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z");
+        try {
+            // Create piped input and output streams
+            PipedInputStream pipedInputStream = new PipedInputStream();
+            PipedOutputStream pipedOutputStream = new PipedOutputStream();
 
-        String currtime = now.format(formatter);
+            // Connect the input stream to the output stream
+            pipedInputStream.connect(pipedOutputStream);
 
-        String header = """
-                          Sender Log File \n
-                Session date and time: %s\n
-                operation    delta     flag     seq      size
-                ------------------------------------------------
-                    """;
-        String data = String.format(header, currtime);
-        System.out.print(data);
-        String entry = String.format("%s          %-8.4f  %s      %-6d    %-4d", "snd", 0.0109, "SYN", 20, 996);
+            // Write data to the output stream
+            String message = "Hello, world!";
+            pipedOutputStream.write(message.getBytes());
 
-        System.out.println(entry);
+            // Read data from the input stream
+            int byteRead;
+            while ((byteRead = pipedInputStream.read()) != -1) {
+                System.out.print((char) byteRead);
+            }
 
+            // Close the streams
+            pipedOutputStream.close();
+            pipedInputStream.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }

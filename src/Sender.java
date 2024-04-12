@@ -113,109 +113,14 @@ public class Sender {
         }
 
         byte[] balls = fileData.readAllBytes();
-        out.write(balls);
+        sock.out.write(balls);
 
-        // set up threads
-        try {
-            start();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-    }
-
-    public void connect() throws IOException {
-        sock.Connect(remoteAddr);
-    }
-
-    private Status send() throws InterruptedException {
-        if (!forwardLoss()) {
-
-        }
-
-        return Status.SUCCESS;
-    }
-
-    private boolean forwardLoss() {
-        return rng.nextFloat() < flp;
-    }
-
-    private boolean reverseLoss() {
-        return rng.nextFloat() < rlp;
-    }
-
-    // Thread runner
-    public void start() throws IOException {
-        new sendThread().start();
-        new receiveThread().start();
-        new timerThread().start();
         new logThread().start();
-        new maintenanceThread().start();
-    }
 
-    protected void sendNextPacket() {
-        byte[] block = new byte[1000];
-        int len = 0;
-        int readByte = 0;
-        for (int i = 0; i < 1000; i++) {
-            readByte = fileData.read();
-            if (readByte == -1) {
-                len = i;
-                break;
-            } else {
-                block[i] = (byte) readByte;
-            }
-        }
-        if (len > 0) {
-            sock.Send(block, len);
-        }
-    }
-
-    // Threads
-    public class sendThread extends Thread {
-        public sendThread() {
-            this.setName("Send Thread");
-        }
-
-        public void run() {
-            while (sock.state == STPState.EST) {
-                try {
-                    sock.processOutputStream();
-                    Thread.sleep(1500);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
-
-    public class receiveThread extends Thread {
-        public receiveThread() {
-            this.setName("Receive Thread");
-        }
-
-        public void run() {
-            while (sock.state == STPState.EST) {
-                try {
-                    sock.processIncomingPackets();
-                } catch (Exception e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
-
-    public class timerThread extends Thread {
-        public void run() {
-            try {
-                Thread.sleep(rto);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
     }
 
     public class logThread extends Thread {
+
         public logThread() {
             this.setName("Logging Thread");
         }
@@ -229,19 +134,16 @@ public class Sender {
                 }
             }
         }
-    }
 
-    public class maintenanceThread extends Thread {
-        public void run() {
-            while (sock.state == STPState.EST) {
-                try {
-                    sock.processReceiveQueue();
-                    sock.retransmissionCheck();
-                    sock.processSendQueue();
-                } catch (Exception e) {
-                    Thread.currentThread().interrupt();
-                }
+        private void writeToLog() throws InterruptedException {
+            String entry = sock.logBuffer.take();
+            byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
+            try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
+                fos.write(bytes);
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
             }
+
         }
 
     }
@@ -269,16 +171,5 @@ public class Sender {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    private void writeToLog() throws InterruptedException {
-        String entry = sock.logBuffer.take();
-        byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
-        try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
-            fos.write(bytes);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
     }
 }
