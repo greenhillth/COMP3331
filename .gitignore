@@ -1,2 +1,4 @@
 *.class
 .vscode/
+sender_log.txt
+receiver_log.txt

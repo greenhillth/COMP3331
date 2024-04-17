@@ -100,7 +100,7 @@ public class Sender {
         try (FileInputStream fis = new FileInputStream(textFile);
                 ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
 
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[1000];
             int bytesRead;
 
             while ((bytesRead = fis.read(buffer)) != -1) {
@@ -115,6 +115,7 @@ public class Sender {
 
         byte[] balls = fileData.readAllBytes();
         sock.out.write(balls);
+        sock.out.flush();
 
         new logThread().start();
 

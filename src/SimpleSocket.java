@@ -1,7 +1,7 @@
-import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.function.Predicate;
-
+import java.util.logging.Logger;
 import java.util.Random;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -40,8 +40,10 @@ public class SimpleSocket {
 
     String logFormat;
 
-    PriorityBlockingQueue<STPPacket> SendWindow;
-    PriorityBlockingQueue<STPPacket> ReceiveWindow;
+    LinkedBlockingQueue<STPPacket> SendBuffer;
+    LinkedBlockingQueue<STPPacket> ReceiveBuffer;
+
+    ArrayBlockingQueue<STPPacket> SlidingWindow;
 
     ArrayBlockingQueue<String> logBuffer;
 
@@ -63,8 +65,9 @@ public class SimpleSocket {
         this.flp = 0;
         this.rng = new Random();
 
-        this.SendWindow = new PriorityBlockingQueue<STPPacket>(window, new STPPacket.PriorityComparator());
-        this.ReceiveWindow = new PriorityBlockingQueue<STPPacket>(window, new STPPacket.PriorityComparator());
+        this.SendBuffer = new LinkedBlockingQueue<STPPacket>(window);// , new STPPacket.PriorityComparator());
+        this.ReceiveBuffer = new LinkedBlockingQueue<STPPacket>(window);// , new STPPacket.PriorityComparator());
+        this.SlidingWindow = new ArrayBlockingQueue<STPPacket>(window);
         this.logBuffer = new ArrayBlockingQueue<String>(window);
 
         this.out = new PipedOutputStream();
@@ -152,6 +155,7 @@ public class SimpleSocket {
         new connectionManager().start();
         new incomingThread().start();
         new outgoingThread().start();
+        new WindowThread().start();
     }
 
     // control signals of other threads + states
@@ -162,12 +166,18 @@ public class SimpleSocket {
 
     // perform logging and sending operations for connection
     protected class connectionManager extends Thread {
+        public connectionManager() {
+            this.setName("Send/Receive Thread");
+        }
+
         public void run() {
-            while (state == STPState.EST) {
+            while (state != STPState.CLOSED) {
                 try {
                     processReceiveQueue();
-                    // retransmissionCheck();
                     processSendQueue();
+
+                    // retransmissionCheck();
+                    Thread.sleep(100);
                 } catch (Exception e) {
                     Thread.currentThread().interrupt();
                 }
@@ -177,6 +187,10 @@ public class SimpleSocket {
 
     // Handle incoming data
     protected class incomingThread extends Thread {
+        public incomingThread() {
+            this.setName("Incoming Thread");
+        }
+
         public void run() {
             while (true) {
                 try {
@@ -191,6 +205,10 @@ public class SimpleSocket {
 
     // Handle outgoing data
     protected class outgoingThread extends Thread {
+        public outgoingThread() {
+            this.setName("Outgoing Thread");
+        }
+
         public void run() {
             while (true) {
                 try {
@@ -203,21 +221,45 @@ public class SimpleSocket {
         }
     }
 
-    // Handle IO between user and socket
-    protected class IOThread extends Thread {
-        public void run() {
+    // Process sliding window functions
+    protected class WindowThread extends Thread {
+        public WindowThread() {
+            this.setName("Sliding Window Processing");
+        }
 
+        public void run() {
+            while (true) {
+                try {
+                    processSlidingWindow();
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+
+                }
+            }
         }
     }
 
+    // Pack data from socket inputstream to send
     public void processOutgoingPackets() throws IOException {
-        if (outReader.available() > 0) {
-            int len = 0;
-            byte[] pload = new byte[1000];
-            len = outReader.read(pload, 0, 1000);
-            STPPacket packet = new STPPacket(STPFlag.DATA, getCurrSeq(len), pload, len);
-            addToSendBuffer(packet);
+
+        byte[] pload = new byte[512];
+        int len;
+
+        try {
+            len = outReader.read(pload);
+            if (len > 0) {
+                STPPacket packet = new STPPacket(STPFlag.DATA, getCurrSeq(len), pload, len);
+                addToSendBuffer(packet);
+            }
+
+        } catch (IOException ie) {
+            try {
+                Thread.sleep(100);
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+            }
         }
+
     }
 
     private int getCurrSeq(int size) {
@@ -228,44 +270,50 @@ public class SimpleSocket {
 
     private boolean acknowledge(int seqno) {
         // Remove element matching sequence
-        boolean balls = SendWindow.removeIf(p -> p.seq == seqno);
+        boolean balls = SlidingWindow.removeIf(p -> p.seq == seqno);
         return balls;
     }
 
     private void addToSendBuffer(STPPacket p) {
-        printwins();
-        SendWindow.put(p);
+        // printwins();
+        try {
+            SendBuffer.put(p);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        System.out.println("Added packet " + p.toString() + " to send window");
     }
 
     private boolean addToReceiveBuffer(STPPacket p) {
-        printwins();
-        return ReceiveWindow.offer(p);
+        // printwins();
+        return ReceiveBuffer.offer(p);
     }
 
     // non-blocking
     public void processSendQueue() {
-        SendWindow.forEach(p -> {
-            p.updateSendFlag(System.currentTimeMillis(), rto);
-            if (p.sendFlag) {
-                DatagramPacket d = new DatagramPacket(p.bytes(), p.size, remoteAddress);
-                if (!packetLoss(p)) {
-                    try {
-                        sock.send(d);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (p.flg == STPFlag.ACK) {
-                    this.ack = p.seq;
-                }
-                addToLogBuffer(p, "snd");
-            }
-        });
+        if ((SlidingWindow.remainingCapacity() == 0) || SendBuffer.isEmpty()) {
+            return;
+        }
 
-        // remove ack as they don't get retransmitted
-        SendWindow.removeIf(p -> p.flg == STPFlag.ACK);
+        STPPacket p = SendBuffer.poll();
+        sendPacket(p);
 
     }
+
+    private void sendPacket(STPPacket p) {
+        DatagramPacket d = new DatagramPacket(p.bytes(), p.size, remoteAddress);
+        if (!packetLoss(p)) {
+            try {
+                sock.send(d);
+                System.out.println("Sending packet " + p.toString());
+                Thread.sleep(100);
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        addToLogBuffer(p, "snd");
+    }
+
     /*
      * WHERE I'M AT:
      * Kinda moved the thread logic to this class, but for some reason - even after
@@ -275,14 +323,6 @@ public class SimpleSocket {
      * culling function directly to the receivewindow idk
      * 
      */
-
-    public void retransmissionCheck() {
-        long cTime = System.currentTimeMillis();
-        SendWindow.forEach(p -> {
-            p.updateSendFlag(cTime, rto);
-        });
-
-    }
 
     private boolean packetLoss(STPPacket p) {
         if (isReceiver || (rlp == 0 && flp == 0)) {
@@ -301,69 +341,116 @@ public class SimpleSocket {
         byte[] buff = new byte[1004];
         DatagramPacket packet = new DatagramPacket(buff, buff.length);
         sock.receive(packet);
+
         int test = packet.getLength();
         String contents = new String(packet.getData(), StandardCharsets.UTF_8);
 
-        STPPacket p = new STPPacket(packet.getData(), -1);
+        STPPacket p = new STPPacket(packet.getData(), packet.getLength());
 
-        if (addToReceiveBuffer(p)) {
-            addToLogBuffer(p, "rcv");
-        } else {
-            addToLogBuffer(p, "drp");
+        addToReceiveBuffer(p);
+
+    }
+
+    // process packets in sliding window
+    public void processSlidingWindow() {
+        SlidingWindow.forEach(p -> {
+            if (p.flg == STPFlag.DATA) {
+
+                if (!p.outgoing) {
+                    p.cullFlag = writeToOutput(p);
+                } else if (p.retransmit(rto)) {
+                    sendPacket(p);
+                }
+
+            }
+        });
+
+        // clean up sliding window
+        SlidingWindow.removeIf(p -> (p.cullFlag));
+
+        // if still full, dump and reset ISN
+    }
+
+    private boolean writeToOutput(STPPacket p) {
+        // check if in sequence
+        if (inSequence(p)) {
+            // if in sequence, update last ack value and write
+            this.ack = p.seq;
+            try {
+                inWriter.write(p.payload);
+            } catch (Exception e) {
+                Thread.currentThread().interrupt();
+            }
+            return true;
         }
+        return false;
+    }
+
+    private boolean inSequence(STPPacket p) {
+        int expected = this.ack + p.size - 4;
+        expected = (expected > 0xFFFF) ? expected - 0xFFFF : expected;
+
+        return (p.seq == expected);
     }
 
     public void processReceiveQueue() {
-        if (!ReceiveWindow.isEmpty()) {
-            printwins();
+        if (!ReceiveBuffer.isEmpty()) {
+            // printwins();
         }
-        STPPacket head = ReceiveWindow.poll();
-        while (head != null) {
-            switch (head.flg) {
-                case DATA:
-                    if (head.payload == null) {
-                        break;
-                    }
-                    // Add data to output and create ack
-                    STPPacket ack = new STPPacket(STPFlag.ACK, head.seq);
-                    addToSendBuffer(ack);
-                    try {
-                        inWriter.write(head.payload);
-                    } catch (Exception e) {
-                        Thread.currentThread().interrupt();
-                    }
+
+        STPPacket p = ReceiveBuffer.poll();
+        if (p == null) {
+            return;
+        }
+
+        switch (p.flg) {
+            case DATA:
+                if (p.payload == null) {
                     break;
-                case ACK:
-                    // Remove corresponding data segment from output queue
-                    if (acknowledge(head.seq)) {
-                        // System.out.println(String.format("removed packet with SEQ=%d", head.seq));
-                    }
-                    break;
-                case SYN:
-                    STPPacket synack = new STPPacket(STPFlag.ACK, head.seq);
-                    addToSendBuffer(synack);
-                    break;
-                case FIN:
-                    // Initiate close
-                    break;
-                default:
-                    break;
-            }
-            head = ReceiveWindow.poll();
+                }
+                // Add to sliding window and create ack
+                if (SlidingWindow.offer(p)) {
+                    addToLogBuffer(p, "rcv");
+                } else {
+                    addToLogBuffer(p, "drp");
+                }
+
+                STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
+                addToSendBuffer(ack);
+                break;
+            case ACK:
+                // Remove corresponding data segment from sliding window
+                addToLogBuffer(p, "rcv");
+                if (acknowledge(p.seq)) {
+                    System.out.println(String.format("removed packet with SEQ=%d", p.seq));
+                }
+                break;
+            case SYN:
+                addToLogBuffer(p, "rcv");
+                // set ISN
+                this.ack = p.seq;
+                STPPacket synack = new STPPacket(STPFlag.ACK, p.seq);
+                addToSendBuffer(synack);
+                break;
+            case FIN:
+                addToLogBuffer(p, "rcv");
+                state = STPState.FIN_WAIT;
+                break;
+            default:
+                break;
         }
 
         return;
-
-        // send diag info to log buffer
-
     }
+
+    // send diag info to log buffer
 
     public void addToLogBuffer(STPPacket p, String type) {
         double t = (p.timeStamp - startTime) * 1e-3;
         String datastr = new String();
         if (p.flg == STPFlag.DATA && p.size > 4) {
             String pload = new String(p.payload, StandardCharsets.UTF_8);
-            datastr = new String("         DATA:" + pload);
+            datastr = new String("         DATA:");
         }
         String entry = String.format(logFormat, type, t, p.flg.name(), p.seq,
                 p.size - 4, datastr);
@@ -372,15 +459,15 @@ public class SimpleSocket {
     }
 
     private void printwins() {
-        if (SendWindow.isEmpty() && ReceiveWindow.isEmpty()) {
+        if (SendBuffer.isEmpty() && ReceiveBuffer.isEmpty()) {
             return;
         }
         System.out.print("SendWindow:   [ ");
-        for (STPPacket p : SendWindow) {
+        for (STPPacket p : SendBuffer) {
             System.out.print("<" + p.toString() + "> ");
         }
         System.out.print("] \nReceiveWindow:[ ");
-        for (STPPacket p : ReceiveWindow) {
+        for (STPPacket p : ReceiveBuffer) {
             System.out.print("<" + p.toString() + "> ");
         }
         System.out.print("]\n");
@@ -432,13 +519,15 @@ public class SimpleSocket {
         int priority;
 
         long timeStamp;
-        boolean sendFlag;
+        boolean outgoing;
+        boolean cullFlag;
 
         // Parameterised Constructors
         public STPPacket(int priority, STPFlag flag, int seqno, byte[] data, int payloadSize) {
             this.priority = priority;
             this.timeStamp = 0;
-            this.sendFlag = true;
+            this.outgoing = true;
+            this.cullFlag = false;
             this.flg = flag;
             this.seq = seqno;
             this.size = payloadSize + 4;
@@ -448,12 +537,14 @@ public class SimpleSocket {
                     this.payload[i] = data[i];
                 }
             }
+            System.out.println("Created packet " + this.toString());
         }
 
         public STPPacket(int priority, byte[] in, int len) {
             this.priority = priority;
             this.timeStamp = System.currentTimeMillis();
-            this.sendFlag = true;
+            this.outgoing = false;
+            this.cullFlag = false;
             this.size = len;
             this.seq = (Byte.toUnsignedInt(in[2]) << 8) | Byte.toUnsignedInt(in[3]);
             int flagint = (Byte.toUnsignedInt(in[0]) << 8) | Byte.toUnsignedInt(in[1]);
@@ -461,10 +552,6 @@ public class SimpleSocket {
                 case 0:
                     // use last ACK value to determine size
                     this.flg = STPFlag.DATA;
-                    if (len == -1) {
-                        this.size = getPacketSize(seq);
-                        len = this.size;
-                    }
                     break;
                 case 1:
                     this.flg = STPFlag.ACK;
@@ -489,12 +576,13 @@ public class SimpleSocket {
                     this.payload[i - 4] = in[i];
                 }
             }
+            System.out.println("Created packet " + this.toString());
         }
 
         // print packet for debugging
         @Override
         public String toString() {
-            return flg.name() + " sflag=" + sendFlag + " seq=" + seq + " size=" + size;
+            return flg.name() + " cFlag=" + cullFlag + " seq=" + seq + " size=" + size;
         }
 
         // Overloaded Constructors
@@ -517,7 +605,6 @@ public class SimpleSocket {
         // Get bytes of initialised STPPacket
         public byte[] bytes() {
             timeStamp = System.currentTimeMillis();
-            sendFlag = false;
             byte sl = (byte) (seq & 0xFF);
             byte sh = (byte) ((seq >>> 8) & 0xFF);
             byte[] header = { flg.hb, flg.lb, sh, sl };
@@ -547,7 +634,7 @@ public class SimpleSocket {
         }
 
         public void printPacket() {
-            byte[] byteArray = this.bytes();
+            byte[] byteArray = this.debuggingBytes();
 
             System.out.println("Hexadecimal representation of packet:");
             for (byte b : byteArray) {
@@ -557,10 +644,8 @@ public class SimpleSocket {
             System.out.println();
         }
 
-        public void updateSendFlag(long currTime, int rto) {
-            if (!sendFlag && ((currTime - timeStamp) > rto)) {
-                sendFlag = true;
-            }
+        public boolean retransmit(int rto) {
+            return (System.currentTimeMillis() - this.timeStamp > (long) rto);
         }
 
         public static class PriorityComparator implements Comparator<STPPacket> {

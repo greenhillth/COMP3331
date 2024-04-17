@@ -139,6 +139,7 @@ public class Receiver {
                 int read = in.read();
                 while (read != -1) {
                     fos.write(read);
+                    fos.flush();
                     read = in.read();
                 }
                 System.out.println("balls");
