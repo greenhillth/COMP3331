@@ -270,7 +270,14 @@ public class SimpleSocket {
 
     private boolean acknowledge(int seqno) {
         // Remove element matching sequence
+
         boolean balls = SlidingWindow.removeIf(p -> p.seq == seqno);
+        if (balls) {
+            System.out.println("Removed packet with seq " + seqno + " from sliding window");
+        } else {
+            System.out.println("Could not remove packet with seq " + seqno + " (Packet not found)");
+
+        }
         return balls;
     }
 
@@ -281,7 +288,7 @@ public class SimpleSocket {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
-        System.out.println("Added packet " + p.toString() + " to send window");
+        System.out.println("Added packet " + p.toString() + " to send buffer");
     }
 
     private boolean addToReceiveBuffer(STPPacket p) {
@@ -296,6 +303,9 @@ public class SimpleSocket {
         }
 
         STPPacket p = SendBuffer.poll();
+        if (p.flg == STPFlag.DATA) {
+            SlidingWindow.add(p);
+        }
         sendPacket(p);
 
     }
@@ -358,7 +368,7 @@ public class SimpleSocket {
 
                 if (!p.outgoing) {
                     p.cullFlag = writeToOutput(p);
-                } else if (p.retransmit(rto)) {
+                } else if (p.timeStamp > (System.currentTimeMillis() + rto)) {
                     sendPacket(p);
                 }
 
@@ -369,6 +379,9 @@ public class SimpleSocket {
         SlidingWindow.removeIf(p -> (p.cullFlag));
 
         // if still full, dump and reset ISN
+        if (SlidingWindow.remainingCapacity() == 0) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private boolean writeToOutput(STPPacket p) {
@@ -523,9 +536,8 @@ public class SimpleSocket {
         boolean cullFlag;
 
         // Parameterised Constructors
-        public STPPacket(int priority, STPFlag flag, int seqno, byte[] data, int payloadSize) {
-            this.priority = priority;
-            this.timeStamp = 0;
+        public STPPacket(STPFlag flag, int seqno, byte[] data, int payloadSize) {
+            this.timeStamp = System.currentTimeMillis();
             this.outgoing = true;
             this.cullFlag = false;
             this.flg = flag;
@@ -537,11 +549,9 @@ public class SimpleSocket {
                     this.payload[i] = data[i];
                 }
             }
-            System.out.println("Created packet " + this.toString());
         }
 
-        public STPPacket(int priority, byte[] in, int len) {
-            this.priority = priority;
+        public STPPacket(byte[] in, int len) {
             this.timeStamp = System.currentTimeMillis();
             this.outgoing = false;
             this.cullFlag = false;
@@ -576,7 +586,6 @@ public class SimpleSocket {
                     this.payload[i - 4] = in[i];
                 }
             }
-            System.out.println("Created packet " + this.toString());
         }
 
         // print packet for debugging
@@ -585,21 +594,9 @@ public class SimpleSocket {
             return flg.name() + " cFlag=" + cullFlag + " seq=" + seq + " size=" + size;
         }
 
-        // Overloaded Constructors
-        public STPPacket(STPFlag flag, int seqno, byte[] data, int payloadSize) {
-            this(0, flag, seqno, data, payloadSize);
-        }
-
+        // Overloaded Constructor
         public STPPacket(STPFlag flag, int seqno) {
-            this(0, flag, seqno, null, 0);
-        }
-
-        public STPPacket(int priority, STPFlag flag, int seqno) {
-            this(priority, flag, seqno, null, 0);
-        }
-
-        public STPPacket(byte[] in, int len) {
-            this(0, in, len);
+            this(flag, seqno, null, 0);
         }
 
         // Get bytes of initialised STPPacket
@@ -643,18 +640,6 @@ public class SimpleSocket {
             }
             System.out.println();
         }
-
-        public boolean retransmit(int rto) {
-            return (System.currentTimeMillis() - this.timeStamp > (long) rto);
-        }
-
-        public static class PriorityComparator implements Comparator<STPPacket> {
-            @Override
-            public int compare(STPPacket p1, STPPacket p2) {
-                return Integer.compare(p1.priority, p2.priority);
-            }
-        }
-
     }
 }
 
