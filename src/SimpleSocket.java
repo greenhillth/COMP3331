@@ -27,6 +27,8 @@ public class SimpleSocket {
     long startTime;
 
     boolean isReceiver;
+    int dupAck;
+    int prevAck;
 
     float rlp;
     float flp;
@@ -48,6 +50,7 @@ public class SimpleSocket {
         this.window = window;
         this.localPort = localPort;
         this.isReceiver = isReciever;
+        this.dupAck = 0;
         this.remoteAddress = null;
 
         this.rlp = 0;
@@ -106,11 +109,6 @@ public class SimpleSocket {
 
         // Receiver logic
         if (isReceiver) {
-            try (FileOutputStream fos = new FileOutputStream("grrrah.txt", false)) {
-                fos.close();
-            } catch (IOException ie) {
-
-            }
             // await handshake
             state = STPState.LISTEN;
             processIncomingPackets();
@@ -197,23 +195,25 @@ public class SimpleSocket {
         public void run() {
             try {
                 while (state != STPState.CLOSED) {
-                    long sleepms = rto;
-
-                    // get timestamp of head
+                    // check state of oldest packet in window
                     STPPacket p = SlidingWindow.peek();
-
-                    if (p != null && p.outgoing) {
-                        // get delta between
-                        sleepms = (rto + p.timeStamp) - System.currentTimeMillis();
-                        if (sleepms > 0) {
-                            Thread.sleep(sleepms);
-                        }
-                        while (p == SlidingWindow.peek()) {
+                    if (p == null) {
+                        continue;
+                    }
+                    // get time difference between original send and now
+                    long invokeTime = System.currentTimeMillis();
+                    boolean resendFlag = ((rto + p.timeStamp) < invokeTime);
+                    // while cached packet still at head
+                    while (p == SlidingWindow.peek()) {
+                        // check if due for resend (either >3 duplicates received or rto)
+                        if (resendFlag) {
+                            resendFlag = false;
+                            dupAck = 0;
+                            invokeTime = System.currentTimeMillis();
                             sendPacket(p);
-                            Thread.sleep(rto);
                         }
-                    } else {
-                        Thread.sleep(sleepms);
+                        // update resend flag
+                        resendFlag = ((dupAck >= 3) || invokeTime + rto < System.currentTimeMillis());
                     }
 
                 }
@@ -319,8 +319,12 @@ public class SimpleSocket {
          */
 
         if (balls) {
+            if (SlidingWindow.isEmpty()) {
+                dupAck = 0;
+            }
             System.out.println("Removed packet with seq " + seqno + " from sliding window");
         } else {
+            dupAck++;
             System.out.println("Could not remove packet with seq " + seqno + " (Packet not found)");
 
         }
@@ -449,6 +453,10 @@ public class SimpleSocket {
                     addToLogBuffer(p, "rcv", "added to window, " + cap + " spots left, " + getSlidingWin());
                     STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
                     sendPacket(ack);
+                    // handle lost ACK by checking recently written packets
+                } else if (ReceiveBuffer.contains(p)) {
+                    STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
+                    sendPacket(ack);
                 } else {
                     addToLogBuffer(p, "drp", "Window full, dropped, " + getSlidingWin());
                 }
@@ -511,6 +519,10 @@ public class SimpleSocket {
     private void writeToOutput(STPPacket p) {
         // Mutex to ensure threads don't concurrently write to output
         lock.lock();
+        if (ReceiveBuffer.size() > window / 1000) {
+            ReceiveBuffer.poll();
+        }
+        ReceiveBuffer.offer(p);
         try (FileOutputStream fos = new FileOutputStream("grrrah.txt", true)) {
             fos.write(p.payload, 0, p.size - 4);
             inWriter.write(p.payload, 0, p.size - 4);
