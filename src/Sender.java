@@ -54,6 +54,7 @@ public class Sender {
 
         System.out.println("Sender created");
 
+        Thread.sleep(500);
         client.run();
 
     }
@@ -93,6 +94,7 @@ public class Sender {
 
         // Set Sender transmission parameters
         sock.setTransmissionParams(flp, rlp, rto);
+        new logThread().start();
 
         OutputStream out = sock.getOutputStream();
 
@@ -117,8 +119,6 @@ public class Sender {
         sock.out.write(balls);
         sock.out.flush();
 
-        new logThread().start();
-
     }
 
     public class logThread extends Thread {
@@ -128,7 +128,7 @@ public class Sender {
         }
 
         public void run() {
-            while (sock.state == STPState.EST) {
+            while (true) {
                 try {
                     writeToLog();
                 } catch (InterruptedException e) {
@@ -169,7 +169,7 @@ public class Sender {
 
             fos.write(bytes);
 
-            sock.setLogFormat("%s          %-8.4f  %-4s      %-6d    %-4d\n");
+            sock.setLogFormat("%s          %-8.4f  %-4s      %-6d    %-4d %s\n");
         } catch (Exception e) {
             e.printStackTrace();
         }

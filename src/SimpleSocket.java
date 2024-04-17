@@ -156,6 +156,7 @@ public class SimpleSocket {
         new incomingThread().start();
         new outgoingThread().start();
         new WindowThread().start();
+        new retransmissionThread().start();
     }
 
     // control signals of other threads + states
@@ -177,7 +178,45 @@ public class SimpleSocket {
                     processSendQueue();
 
                     // retransmissionCheck();
-                    Thread.sleep(100);
+                    if (!isReceiver) {
+                        Thread.sleep(300);
+
+                    }
+                } catch (Exception e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+    // perform logging and sending operations for connection
+    protected class retransmissionThread extends Thread {
+        public retransmissionThread() {
+            this.setName("Retransmission Thread");
+        }
+
+        public void run() {
+            while (state != STPState.CLOSED) {
+                long sleepms = rto;
+                try {
+                    STPPacket p = SlidingWindow.peek();
+                    if (p != null && p.outgoing) {
+                        // store sequence no
+                        int headseq = p.seq;
+                        // set sleep time
+                        sleepms = System.currentTimeMillis() - p.timeStamp + rto;
+                        // sleep until RTO reached
+                        Thread.sleep(sleepms);
+                        if (SlidingWindow.peek() == p) {
+                            p.timeStamp = System.currentTimeMillis();
+                            SlidingWindow.offer(p);
+                            sendPacket(p);
+
+                        }
+                    } else {
+                        Thread.sleep(rto);
+                    }
+
                 } catch (Exception e) {
                     Thread.currentThread().interrupt();
                 }
@@ -254,7 +293,7 @@ public class SimpleSocket {
 
         } catch (IOException ie) {
             try {
-                Thread.sleep(100);
+                // Thread.sleep(100);
             } catch (Exception e) {
                 Thread.currentThread().interrupt();
             }
@@ -270,8 +309,18 @@ public class SimpleSocket {
 
     private boolean acknowledge(int seqno) {
         // Remove element matching sequence
-
         boolean balls = SlidingWindow.removeIf(p -> p.seq == seqno);
+
+        /*
+         * 
+         * STPPacket head = SlidingWindow.peek();
+         * boolean balls = false;
+         * if ((head != null) && (head.seq == seqno)) {
+         * SlidingWindow.poll();
+         * balls = true;
+         * }
+         */
+
         if (balls) {
             System.out.println("Removed packet with seq " + seqno + " from sliding window");
         } else {
@@ -288,7 +337,15 @@ public class SimpleSocket {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
-        System.out.println("Added packet " + p.toString() + " to send buffer");
+        // System.out.println("Added packet " + p.toString() + " to send buffer");
+    }
+
+    private String getSlidingWin() {
+        String window = new String(" Current window state: [");
+        for (STPPacket p : SlidingWindow) {
+            window = window + " <" + p.toString() + "> ";
+        }
+        return window + "]";
     }
 
     private boolean addToReceiveBuffer(STPPacket p) {
@@ -296,15 +353,25 @@ public class SimpleSocket {
         return ReceiveBuffer.offer(p);
     }
 
-    // non-blocking
+    // blocking
     public void processSendQueue() {
-        if ((SlidingWindow.remainingCapacity() == 0) || SendBuffer.isEmpty()) {
+        if (SendBuffer.isEmpty()) {
             return;
         }
 
         STPPacket p = SendBuffer.poll();
+
+        // add to sliding window to await confirmation
         if (p.flg == STPFlag.DATA) {
-            SlidingWindow.add(p);
+            try {
+                SlidingWindow.put(p);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            if (isReceiver) {
+                SlidingWindow.offer(p);
+
+            }
         }
         sendPacket(p);
 
@@ -316,12 +383,14 @@ public class SimpleSocket {
             try {
                 sock.send(d);
                 System.out.println("Sending packet " + p.toString());
-                Thread.sleep(100);
+                // Thread.sleep(100);
             } catch (Exception e) {
                 Thread.currentThread().interrupt();
             }
+            addToLogBuffer(p, "snd", "successful send");
+        } else {
+            addToLogBuffer(p, "snd", "simulated packet loss");
         }
-        addToLogBuffer(p, "snd");
     }
 
     /*
@@ -352,9 +421,6 @@ public class SimpleSocket {
         DatagramPacket packet = new DatagramPacket(buff, buff.length);
         sock.receive(packet);
 
-        int test = packet.getLength();
-        String contents = new String(packet.getData(), StandardCharsets.UTF_8);
-
         STPPacket p = new STPPacket(packet.getData(), packet.getLength());
 
         addToReceiveBuffer(p);
@@ -363,47 +429,50 @@ public class SimpleSocket {
 
     // process packets in sliding window
     public void processSlidingWindow() {
+
         SlidingWindow.forEach(p -> {
-            if (p.flg == STPFlag.DATA) {
-
-                if (!p.outgoing) {
-                    p.cullFlag = writeToOutput(p);
-                } else if (p.timeStamp > (System.currentTimeMillis() + rto)) {
-                    sendPacket(p);
+            if (!p.outgoing && p.flg == STPFlag.DATA) {
+                if (inSequence(p)) {
+                    writeToOutput(p);
+                    p.cullFlag = true;
                 }
-
             }
         });
 
+        int b4 = SlidingWindow.size();
         // clean up sliding window
         SlidingWindow.removeIf(p -> (p.cullFlag));
-
-        // if still full, dump and reset ISN
-        if (SlidingWindow.remainingCapacity() == 0) {
-            Thread.currentThread().interrupt();
+        int after = SlidingWindow.size();
+        if (b4 > after && isReceiver) {
+            System.out.printf("Removed %d elements from SlidingWindow\n", b4 - after);
         }
     }
 
-    private boolean writeToOutput(STPPacket p) {
-        // check if in sequence
-        if (inSequence(p)) {
-            // if in sequence, update last ack value and write
-            this.ack = p.seq;
-            try {
-                inWriter.write(p.payload);
-            } catch (Exception e) {
-                Thread.currentThread().interrupt();
-            }
+    private boolean retransmissionCheck(STPPacket p) {
+        if (p.outgoing && ((p.timeStamp + rto) < System.currentTimeMillis())) {
             return true;
         }
         return false;
+    }
+
+    private void writeToOutput(STPPacket p) {
+        try {
+            inWriter.write(p.payload);
+            p.cullFlag = true;
+        } catch (Exception e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private boolean inSequence(STPPacket p) {
         int expected = this.ack + p.size - 4;
         expected = (expected > 0xFFFF) ? expected - 0xFFFF : expected;
 
-        return (p.seq == expected);
+        boolean result = (p.seq == expected);
+        if (result) {
+            this.ack = p.seq;
+        }
+        return result;
     }
 
     public void processReceiveQueue() {
@@ -421,15 +490,26 @@ public class SimpleSocket {
                 if (p.payload == null) {
                     break;
                 }
-                // Add to sliding window and create ack
-                if (SlidingWindow.offer(p)) {
-                    addToLogBuffer(p, "rcv");
+
+                // Attempt to write to output stream
+                if (inSequence(p)) {
+                    writeToOutput(p);
+                    STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
+                    sendPacket(ack);
+                } else if (SlidingWindow.remainingCapacity() > 1) {
+                    int cap = SlidingWindow.remainingCapacity();
+                    if (!SlidingWindow.contains(p)) {
+                        SlidingWindow.add(p);
+                    } else {
+                        addToLogBuffer(p, "inf", "Duplicate data recieved, not added");
+                    }
+                    addToLogBuffer(p, "rcv", "added to window, " + cap + " spots left, " + getSlidingWin());
+                    STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
+                    sendPacket(ack);
                 } else {
-                    addToLogBuffer(p, "drp");
+                    addToLogBuffer(p, "drp", "Window full, dropped, " + getSlidingWin());
                 }
 
-                STPPacket ack = new STPPacket(STPFlag.ACK, p.seq);
-                addToSendBuffer(ack);
                 break;
             case ACK:
                 // Remove corresponding data segment from sliding window
@@ -454,21 +534,20 @@ public class SimpleSocket {
         }
 
         return;
+
     }
 
     // send diag info to log buffer
 
-    public void addToLogBuffer(STPPacket p, String type) {
+    public void addToLogBuffer(STPPacket p, String type, String option) {
         double t = (p.timeStamp - startTime) * 1e-3;
-        String datastr = new String();
-        if (p.flg == STPFlag.DATA && p.size > 4) {
-            String pload = new String(p.payload, StandardCharsets.UTF_8);
-            datastr = new String("         DATA:");
-        }
         String entry = String.format(logFormat, type, t, p.flg.name(), p.seq,
-                p.size - 4, datastr);
-        // System.out.print(entry);
+                p.size - 4, option);
         logBuffer.offer(entry);
+    }
+
+    public void addToLogBuffer(STPPacket p, String type) {
+        addToLogBuffer(p, type, "");
     }
 
     private void printwins() {
@@ -485,15 +564,6 @@ public class SimpleSocket {
         }
         System.out.print("]\n");
 
-    }
-
-    public Status Send(byte[] data, int length) {
-        if (!(length > 0)) {
-            return Status.INV_PACKT;
-        }
-        STPPacket packet = new STPPacket(STPFlag.DATA, getCurrSeq(length), data, length);
-        addToSendBuffer(packet);
-        return Status.SUCCESS;
     }
 
     private int startSeq(int lower, int upper) {
@@ -513,16 +583,6 @@ public class SimpleSocket {
      *
      * 
      */
-    public int getPacketSize(int seq) {
-        int size = seq - ack;
-        if (seq == ack) {
-            return 4;
-        }
-        if (seq < ack) {
-            size = (seq + 0xFFFF) - ack;
-        }
-        return (size > 1000) ? 1004 : size + 4;
-    }
 
     public class STPPacket {
         STPFlag flg;
@@ -594,6 +654,19 @@ public class SimpleSocket {
             return flg.name() + " cFlag=" + cullFlag + " seq=" + seq + " size=" + size;
         }
 
+        // Overloaded equality for comparisons
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this) {
+                return true;
+            }
+            if (!(obj instanceof STPPacket)) {
+                return false;
+            }
+            STPPacket other = (STPPacket) obj;
+            return this.seq == other.seq && this.flg == other.flg;
+        }
+
         // Overloaded Constructor
         public STPPacket(STPFlag flag, int seqno) {
             this(flag, seqno, null, 0);
@@ -615,23 +688,8 @@ public class SimpleSocket {
             return packet.array();
         }
 
-        // same as above but doesnt modify timeStamp
-        public byte[] debuggingBytes() {
-            byte sl = (byte) (seq & 0xFF);
-            byte sh = (byte) ((seq >>> 8) & 0xFF);
-            byte[] header = { flg.hb, flg.lb, sh, sl };
-            if (size == 4) {
-                return header;
-            }
-            byte[] byteArr = new byte[size];
-            ByteBuffer packet = ByteBuffer.wrap(byteArr);
-            packet.put(header);
-            packet.put(payload);
-            return packet.array();
-        }
-
         public void printPacket() {
-            byte[] byteArray = this.debuggingBytes();
+            byte[] byteArray = this.bytes();
 
             System.out.println("Hexadecimal representation of packet:");
             for (byte b : byteArray) {
