@@ -77,7 +77,7 @@ public class Sender {
     public void run() throws Exception {
         initialiseLog();
 
-        for (int i = 0; (!sock.connected) && i < 5; i++) {
+        for (int i = 0; (!sock.connected()) && i < 5; i++) {
             try {
                 sock.Connect(remoteAddr);
             } catch (Exception e) {
@@ -88,7 +88,7 @@ public class Sender {
                 }
             }
         }
-        if (!sock.connected) {
+        if (!sock.connected()) {
             throw new SocketException("STP Unable to connect");
         }
 
@@ -106,8 +106,9 @@ public class Sender {
             int bytesRead;
 
             while ((bytesRead = fis.read(buffer)) != -1) {
-                bos.write(buffer, 0, bytesRead);
+                out.write(buffer, 0, bytesRead);
             }
+            out.close();
 
             fileData = new ByteArrayInputStream(bos.toByteArray());
 
@@ -117,8 +118,6 @@ public class Sender {
 
         byte[] balls = fileData.readAllBytes();
         sock.out.write(balls);
-        sock.out.flush();
-
     }
 
     public class logThread extends Thread {

@@ -1,3 +1,4 @@
+import java.io.BufferedInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -68,7 +69,7 @@ public class Receiver {
     public void run() {
         initialiseLog();
 
-        for (int i = 0; (!sock.connected) && i < 5; i++) {
+        for (int i = 0; (!sock.connected()) && i < 5; i++) {
             try {
                 sock.Connect(remoteAddr);
             } catch (Exception e) {
@@ -79,7 +80,7 @@ public class Receiver {
                 }
             }
         }
-        if (!sock.connected) {
+        if (!sock.connected()) {
             return;
         }
 
@@ -136,13 +137,14 @@ public class Receiver {
         private void writeToOutput() throws InterruptedException {
             try (FileOutputStream fos = new FileOutputStream(outFile, true);) {
                 InputStream in = sock.getInputStream();
-                int read = in.read();
-                while (read != -1) {
-                    fos.write(read);
-                    fos.flush();
-                    read = in.read();
+                byte[] buff = new byte[1000];
+                int len = 0;
+                len = in.read(buff);
+                if (len > 0) {
+                    fos.write(buff, 0, len);
+                } else {
+                    System.out.println("balls");
                 }
-                System.out.println("balls");
             } catch (Exception e) {
                 Thread.currentThread().interrupt();
             }
