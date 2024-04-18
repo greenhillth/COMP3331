@@ -99,8 +99,7 @@ public class Sender {
         OutputStream out = sock.getOutputStream();
 
         // Load file data into filedata buffer
-        try (FileInputStream fis = new FileInputStream(textFile);
-                ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+        try (FileInputStream fis = new FileInputStream(textFile)) {
 
             byte[] buffer = new byte[1000];
             int bytesRead;
@@ -110,14 +109,10 @@ public class Sender {
             }
             out.close();
 
-            fileData = new ByteArrayInputStream(bos.toByteArray());
-
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        byte[] balls = fileData.readAllBytes();
-        sock.out.write(balls);
     }
 
     public class logThread extends Thread {
@@ -127,12 +122,20 @@ public class Sender {
         }
 
         public void run() {
-            while (true) {
+            while (sock.connected() && !sock.logBuffer.isEmpty()) {
                 try {
                     writeToLog();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
+            }
+            try {
+                Thread.sleep(500);
+                while (!sock.logBuffer.isEmpty()) {
+                    writeToLog();
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
             }
         }
 

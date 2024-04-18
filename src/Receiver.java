@@ -1,4 +1,3 @@
-import java.io.BufferedInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -6,8 +5,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.net.InetAddress;
 
 public class Receiver {
@@ -97,7 +95,7 @@ public class Receiver {
         }
 
         public void run() {
-            while (sock.state == STPState.EST) {
+            while (sock.state != STPState.CLOSED) {
                 try {
                     writeToLog();
                 } catch (InterruptedException e) {
@@ -107,11 +105,14 @@ public class Receiver {
         }
 
         private void writeToLog() throws InterruptedException {
-            String entry = sock.logBuffer.take();
+            String entry = sock.logBuffer.poll(5000, TimeUnit.MILLISECONDS);
+            if (entry == null) {
+                return;
+            }
             byte[] bytes = entry.getBytes(StandardCharsets.UTF_8);
             try (FileOutputStream fos = new FileOutputStream(logFile, true)) {
                 fos.write(bytes);
-            } catch (Exception e) {
+            } catch (IOException e) {
                 Thread.currentThread().interrupt();
             }
 
@@ -125,16 +126,12 @@ public class Receiver {
         }
 
         public void run() {
-            while (sock.state == STPState.EST) {
-                try {
-                    writeToOutput();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+            while (writeToOutput()) {
             }
+
         }
 
-        private void writeToOutput() throws InterruptedException {
+        private boolean writeToOutput() {
             try (FileOutputStream fos = new FileOutputStream(outFile, true);) {
                 InputStream in = sock.getInputStream();
                 byte[] buff = new byte[1000];
@@ -145,11 +142,13 @@ public class Receiver {
                 } else {
                     System.out.println("balls");
                 }
-            } catch (Exception e) {
-                Thread.currentThread().interrupt();
+            } catch (IOException e) {
+                return false;
             }
+            return true;
 
         }
+
     }
 
     private void initialiseLog() {
